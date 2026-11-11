@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#fafbf9"><meta name="description" content="用手绘泳道绘制计算、通信和拷贝过程，探索数据依赖与重叠空间。"><title>网络流程画板</title><link rel="stylesheet" href="./style.css"><script src="./vendor/rough.js"></script><script type="module" src="./app.mjs"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#fafbf9"><meta name="description" content="用手绘泳道绘制计算、通信和拷贝过程，探索数据依赖与重叠空间。"><title>网络流程画板</title><link rel="stylesheet" href="./style.css"><link rel="stylesheet" href="./interactions.css"><script src="./vendor/rough.js"></script><script type="module" src="./editor.mjs"></script></head>
 <body>
 <header class="app-header">
   <div class="brand"><svg width="35" height="35" viewBox="0 0 35 35" aria-hidden="true"><path d="M4 7Q15 5 30 7L29 14 5 15ZM5 20L30 19 30 28 4 29Z" fill="#e7ebfa" stroke="#635a9c" stroke-width="1.6"/><path d="M10 11L24 11M11 24L24 24" stroke="#635a9c" stroke-width="1.6"/></svg><div><strong>网络流程画板</strong><span>把依赖画清楚，让并行看得见</span></div></div>
@@ -9,6 +9,7 @@
 </header>
 <div class="app-body">
   <aside class="library panel" aria-label="组件仓库">
+    <button id="library-toggle" class="panel-toggle" aria-label="收起组件仓库" title="收起组件仓库">‹</button><span class="collapsed-caption">组件仓库</span><div class="panel-resizer" data-panel-resize="library" title="左右拖动调整组件仓库"></div>
     <div class="panel-heading"><h2>组件仓库</h2><span class="small-tag">拖到泳道里</span></div>
     <p class="muted intro">从一个过程开始，<br>沿着时间向右展开。</p>
     <h3>基础形状</h3><div id="shape-library" class="shape-library"></div>
@@ -17,6 +18,7 @@
     <button id="help-btn" class="help-button" data-icon="help">操作指南<span>?</span></button>
   </aside>
   <main class="workspace">
+    <div class="flow-navigation"><button id="back-flow" aria-label="返回上一级流程" hidden>‹ 返回</button><nav id="breadcrumbs" aria-label="流程层级"></nav><span id="flow-level">主流程</span></div>
     <div class="toolbar">
       <div class="tool-group"><button id="select-tool" class="icon-button active" aria-label="选择工具" title="选择和拖动" data-icon="cursor"></button><button id="pan-tool" class="icon-button" aria-label="平移工具" title="平移画布 · 按住空格也可平移" data-icon="hand"></button><span class="separator"></span><button id="undo-btn" class="icon-button" aria-label="撤销" title="撤销 Ctrl+Z" data-icon="undo"></button><button id="redo-btn" class="icon-button" aria-label="重做" title="重做 Ctrl+Shift+Z" data-icon="redo"></button></div>
       <div class="tool-group edit-tools"><button id="copy-btn" class="icon-button" aria-label="复制选中对象" title="复制 Ctrl+C" data-icon="copy"></button><button id="cut-btn" class="icon-button" aria-label="剪切选中对象" title="剪切 Ctrl+X" data-icon="cut"></button><button id="paste-btn" class="icon-button" aria-label="粘贴" title="粘贴 Ctrl+V" data-icon="paste"></button><button id="delete-btn" class="icon-button" aria-label="删除选中对象" title="删除 Delete" data-icon="trash"></button></div>
@@ -26,9 +28,9 @@
       <div id="canvas-sizer"><svg id="diagram" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="网络流程泳道图"></svg></div>
       <div id="empty-hint" class="empty-hint"><span class="hint-arrow">↖</span><p>把左侧的组件拖进来</p><span>计算、通信、拷贝，从这里开始。</span></div>
     </div>
-    <div class="workspace-bottom"><span class="context-hint" id="context-hint">双击改文字 · 拖动左右圆点连线 · 空格拖动画布</span><div class="zoom-controls"><button id="zoom-out" aria-label="缩小画布">−</button><button id="zoom-value" aria-label="重置缩放">100%</button><button id="zoom-in" aria-label="放大画布">+</button><span></span><button id="fit-btn" aria-label="适应画布" data-icon="fit"></button></div></div>
+    <div class="workspace-bottom"><span class="context-hint" id="context-hint">Ctrl+单击多选 · 空白拖动框选 · W/S 横向缩放 · A/D 平移</span><div class="zoom-controls"><span id="horizontal-zoom">横向 100%</span><button id="zoom-out" aria-label="缩小画布">−</button><button id="zoom-value" aria-label="重置缩放">100%</button><button id="zoom-in" aria-label="放大画布">+</button><span></span><button id="fit-btn" aria-label="适应画布" data-icon="fit"></button></div></div>
   </main>
-  <aside class="inspector panel" aria-label="属性设置"><div id="inspector-content"></div></aside>
+  <aside class="inspector panel" aria-label="属性设置"><button id="inspector-toggle" class="panel-toggle" aria-label="收起过程属性" title="收起过程属性">›</button><span class="collapsed-caption">过程属性</span><div class="panel-resizer" data-panel-resize="inspector" title="左右拖动调整过程属性"></div><div id="inspector-content"></div></aside>
 </div>
 <footer class="app-footer"><div class="legend"><span><i class="compute"></i>计算</span><span><i class="communication"></i>通信</span><span><i class="copy"></i>拷贝</span></div><span>横向位置与宽度表示相对时序</span><span id="document-stats">3 条泳道 · 0 个过程</span></footer>
 <div id="popover" class="popover" hidden></div><div id="toast" class="toast" role="status" aria-live="polite"></div>

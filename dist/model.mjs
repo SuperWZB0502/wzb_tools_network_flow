@@ -68,7 +68,7 @@ export function duplicateLane(d,id,payload) {
   const original=d.lanes.find(l=>l.id===id),source=payload||{lane:original,nodes:d.nodes.filter(n=>n.laneId===id),edges:d.edges};
   if(!source.lane)return;
   const lane={...clone(source.lane),id:uid(),name:source.lane.name.slice(0,117)+' 副本'};
-  const map=new Map(),nodes=source.nodes.map(n=>{const fresh={...clone(n),id:uid(),laneId:lane.id};map.set(n.id,fresh.id);return fresh;});
+  const map=new Map(),nodes=source.nodes.map(n=>{const fresh={...cloneNodeTree(n),laneId:lane.id};map.set(n.id,fresh.id);return fresh;});
   const edges=source.edges.filter(e=>map.has(e.from)&&map.has(e.to)).map(e=>({...clone(e),id:uid(),from:map.get(e.from),to:map.get(e.to)}));
   const index=d.lanes.findIndex(l=>l.id===id);
   d.lanes.splice(index<0?d.lanes.length:index+1,0,lane);d.nodes.push(...nodes);d.edges.push(...edges);return lane;
@@ -82,20 +82,49 @@ export function deleteSelection(d,s) {
 }
 export function validateDocument(input) {
   const fail=()=>{throw Error('流程文件格式不正确，请选择本工具导出的 JSON 文件。');};
-  if(!input||input.version!==1||typeof input.title!=='string'||input.title.length>200||!Array.isArray(input.lanes)||!Array.isArray(input.nodes)||!Array.isArray(input.edges)||input.lanes.length>100||input.nodes.length>3000||input.edges.length>6000)fail();
-  const d=clone(input),all=new Set();
+  const all=new Set();let totalNodes=0,totalFlows=0;
   const take=id=>{if(typeof id!=='string'||!/^[-a-zA-Z0-9_]{1,120}$/.test(id)||all.has(id))fail();all.add(id);};
+  function check(input,depth=0){
+  if(depth>20||++totalFlows>300||!input||input.version!==1||typeof input.title!=='string'||input.title.length>200||!Array.isArray(input.lanes)||!Array.isArray(input.nodes)||!Array.isArray(input.edges)||input.lanes.length>100||(totalNodes+=input.nodes.length)>3000||input.edges.length>6000)fail();
+  const d={...input,lanes:input.lanes.map(l=>({...l})),nodes:input.nodes.map(n=>({...n})),edges:input.edges.map(e=>({...e}))};
   for(const l of d.lanes){take(l.id);if(!Object.hasOwn(TYPES,l.type)||typeof l.name!=='string'||l.name.length>120)fail();}
   const lanes=new Set(d.lanes.map(l=>l.id));
   for(const n of d.nodes) {
     take(n.id);
     n.offsetY??=80;
     if(!Number.isFinite(n.offsetY)||n.offsetY<32||n.offsetY>120)fail();
+    n.offsetY=80;
     if(!lanes.has(n.laneId)||!SHAPES.includes(n.shape)||!Number.isFinite(n.x)||n.x<MIN_X||n.x>1000000||!Number.isFinite(n.width)||n.width<MIN_WIDTH||n.width>1000000||typeof n.text!=='string'||n.text.length>4000||!['left','center','right'].includes(n.align)||!['top','middle','bottom'].includes(n.valign)||!Number.isFinite(n.fontSize)||n.fontSize<10||n.fontSize>40||!(n.fill==='auto'||/^#[0-9a-f]{6}$/i.test(n.fill)))fail();
+    if(n.expanded!==undefined&&!['none','one','all'].includes(n.expanded))fail();
+    if(n.subflow!==undefined)n.subflow=check(n.subflow,depth+1);
   }
   for(const l of d.lanes){const ns=laneNodes(d,l.id);for(let i=1;i<ns.length;i++)if(ns[i].x<ns[i-1].x+ns[i-1].width+GAP-0.01)fail();}
   const edges=d.edges;d.edges=[];
   for(const e of edges){take(e.id);if(!addEdge(d,e.from,e.fromSide,e.to,e.toSide))fail();d.edges.at(-1).id=e.id;}
   // Only known properties are retained, so imports cannot inject UI or executable markup.
-  return {version:1,title:d.title,lanes:d.lanes.map(({id,type,name})=>({id,type,name})),nodes:d.nodes.map(({id,shape,laneId,x,offsetY,width,text,align,valign,fontSize,fill})=>({id,shape,laneId,x,offsetY,width,text,align,valign,fontSize,fill})),edges:d.edges};
+  return {version:1,title:d.title,lanes:d.lanes.map(({id,type,name})=>({id,type,name})),nodes:d.nodes.map(({id,shape,laneId,x,offsetY,width,text,align,valign,fontSize,fill,subflow,expanded})=>({id,shape,laneId,x,offsetY,width,text,align,valign,fontSize,fill,...(subflow?{subflow}:{}),...(expanded?{expanded}:{})})),edges:d.edges};
+  }
+  return check(input);
+}
+export function ensureSubflow(node){
+  if(!node.subflow){node.subflow=createDocument();node.subflow.title=(node.text||'未命名过程').slice(0,185)+' · 子流程';}
+  return node.subflow;
+}
+export function getFlow(root,path=[]){let d=root;for(const id of path){d=d?.nodes.find(n=>n.id===id)?.subflow;if(!d)return null;}return d;}
+export function cloneFlow(d){
+  const lanes=d.lanes.map(l=>({...clone(l),id:uid()})),lm=new Map(d.lanes.map((l,i)=>[l.id,lanes[i].id]));
+  const nodes=d.nodes.map(n=>({...cloneNodeTree(n),laneId:lm.get(n.laneId)})),nm=new Map(d.nodes.map((n,i)=>[n.id,nodes[i].id]));
+  return {version:1,title:d.title,lanes,nodes,edges:d.edges.map(e=>({...clone(e),id:uid(),from:nm.get(e.from),to:nm.get(e.to)}))};
+}
+export function cloneNodeTree(n){const fresh={...clone(n),id:uid(),offsetY:80};if(n.subflow)fresh.subflow=cloneFlow(n.subflow);return fresh;}
+export function moveNodes(d,ids,anchorId,targetLaneId,x){
+  const nodes=d.nodes.filter(n=>ids.includes(n.id)),anchor=nodes.find(n=>n.id===anchorId),targetIndex=d.lanes.findIndex(l=>l.id===targetLaneId);
+  if(!anchor||targetIndex<0)return;
+  if(nodes.length===1){placeNode(d,anchorId,targetLaneId,x);anchor.offsetY=80;return;}
+  const laneIndex=n=>d.lanes.findIndex(l=>l.id===n.laneId),minLane=Math.min(...nodes.map(laneIndex)),maxLane=Math.max(...nodes.map(laneIndex));
+  const shift=Math.max(-minLane,Math.min(d.lanes.length-1-maxLane,targetIndex-laneIndex(anchor)));
+  const dx=Math.max(MIN_X-Math.min(...nodes.map(n=>n.x)),x-anchor.x);
+  const moves=nodes.map(n=>({n,x:n.x+dx,lane:d.lanes[laneIndex(n)+shift].id})).sort((a,b)=>a.x-b.x);
+  d.nodes=d.nodes.filter(n=>!ids.includes(n.id));
+  for(const item of moves){item.n.laneId=item.lane;item.n.x=item.x;item.n.offsetY=80;d.nodes.push(item.n);placeNode(d,item.n.id,item.lane,item.x);}
 }

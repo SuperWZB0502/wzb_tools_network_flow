@@ -1,1 +1,1 @@
-{"name":"network-flow-sketch","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test tests/model.test.mjs && node tests/browser.cjs && node tests/interaction.cjs","start":"node scripts/serve.cjs"}}
+{"name":"network-flow-sketch","version":"1.1.0","private":true,"type":"module","scripts":{"test":"node scripts/test.cjs","start":"node scripts/serve.cjs"}}

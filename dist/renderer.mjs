@@ -1,0 +1,86 @@
+import {TYPES} from './model.mjs';
+import {LEFT,TOP,NH,buildScene,nodeKey,scopeKey} from './layout.mjs';
+const NS='http://www.w3.org/2000/svg';
+const sameScopeValue=(a,b)=>scopeKey(a)===scopeKey(b);
+const insideNodeScope=(scope,owner,id)=>scope.length>owner.length&&owner.every((part,i)=>scope[i]===part)&&scope[owner.length]===id;
+export function el(tag,attrs={},parent){const n=document.createElementNS(NS,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);if(parent)parent.append(n);return n;}
+export function label(text,x,y,attrs={},parent){const n=el('text',{x,y,'font-family':'Segoe UI, Microsoft YaHei, sans-serif',...attrs},parent);n.textContent=text;return n;}
+function seed(id){let n=1;for(const c of id)n=(n*31+c.charCodeAt(0))>>>0;return n||1;}
+export function shape(rc,type,x,y,w,h,o){if(type==='ellipse')return rc.ellipse(x+w/2,y+h/2,w,h,o);if(type==='diamond')return rc.polygon([[x+w/2,y],[x+w,y+h/2],[x+w/2,y+h],[x,y+h/2]],o);if(type==='parallelogram')return rc.polygon([[x+16,y],[x+w,y],[x+w-16,y+h],[x,y+h]],o);if(type==='rounded'||type==='capsule'){const r=type==='capsule'?h/2:9;return rc.path(`M${x+r} ${y}H${x+w-r}Q${x+w} ${y} ${x+w} ${y+r}V${y+h-r}Q${x+w} ${y+h} ${x+w-r} ${y+h}H${x+r}Q${x} ${y+h} ${x} ${y+h-r}V${y+r}Q${x} ${y} ${x+r} ${y}Z`,o);}return rc.rectangle(x,y,w,h,o);}
+export function curve(a,as,b,bs){const c=Math.max(52,Math.abs(b.x-a.x)*.46),s1=as==='right'?1:-1,s2=bs==='right'?1:-1;if(Math.abs(a.y-b.y)<10&&((as==='right'&&b.x<a.x)||(as==='left'&&b.x>a.x))){const arch=a.y-78;return `M${a.x} ${a.y}C${a.x+s1*55} ${arch} ${b.x+s2*55} ${arch} ${b.x} ${b.y}`;}return `M${a.x} ${a.y}C${a.x+s1*c} ${a.y} ${b.x+s2*c} ${b.y} ${b.x} ${b.y}`;}
+const measure=document.createElement('canvas').getContext('2d');
+function textLines(n,width,height){const factor=n.shape==='diamond'?.55:n.shape==='ellipse'?.72:1,available=Math.max(18,width*factor-30);measure.font=`${n.fontSize}px "Microsoft YaHei",sans-serif`;const lines=[];for(const p of n.text.split('\n')){let line='';for(const ch of p){if(line&&measure.measureText(line+ch).width>available){lines.push(line);line='';}line+=ch;}lines.push(line);}const max=Math.max(1,Math.floor((height-26)/(n.fontSize*1.3)));if(lines.length>max){lines.length=max;let s=lines[max-1];while(s&&measure.measureText(s+'…').width>available)s=s.slice(0,-1);lines[max-1]=s+'…';}return{lines,factor};}
+const glyphs={open:'M14 4h6v6M4 14v6h6',one:'M5 6h14M5 12l7 5 7-5',all:'M5 4h14M5 9l7 5 7-5M5 15l7 5 7-5',collapse:'M5 16l7-6 7 6M5 5h14'};
+export function createRenderer(svg,sizer){
+  let state=null,scene=null,frame=0,clock=0,exporting=false;const motions=new Map();let nodeRefs=new Map(),laneRefs=new Map(),edgeRefs=[];
+  const reduced=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function sample(m,time){const p=Math.min(1,Math.max(0,(time-m.start)/180)),t=1-Math.pow(1-p,3);return{x:m.from.x+(m.to.x-m.from.x)*t,y:m.from.y+(m.to.y-m.from.y)*t,width:m.from.width+(m.to.width-m.from.width)*t,height:m.from.height+(m.to.height-m.from.height)*t,done:p===1};}
+  let animating=false;
+  function applyTransform(group,target,current){const sx=current.width/target.width,sy=current.height/target.height;if(Math.abs(current.x-target.x)+Math.abs(current.y-target.y)+Math.abs(sx-1)+Math.abs(sy-1)<.001)group.removeAttribute('transform');else group.setAttribute('transform',`translate(${current.x} ${current.y}) scale(${sx} ${sy}) translate(${-target.x} ${-target.y})`);}
+  function updateFrame(time=performance.now()){
+    if(!scene||exporting)return;let running=false;
+    for(const s of scene.lanes){const m=motions.get(s.key),r=m?sample(m,time):s.target;s.actual=r;running||=!r.done;const group=laneRefs.get(s.key);if(group){applyTransform(group,s.target,r);group.setAttribute('data-y',r.y);group.setAttribute('data-height',r.height);}}
+    for(const s of scene.nodes){const m=motions.get(s.key),r=m?sample(m,time):s.target;s.actual=r;running||=!r.done;scene.actual.set(s.key,{...s,...r});const group=nodeRefs.get(s.key);if(group){applyTransform(group,s.target,r);for(const[k,v]of Object.entries({x:r.x,y:r.y,width:r.width,height:r.height}))group.setAttribute('data-'+k,v);}}
+    for(const entry of edgeRefs){const a=scene.actual.get(entry.fromKey),b=scene.actual.get(entry.toKey);if(!a||!b)continue;const e=entry.edge,p=curve({x:a.x+(e.fromSide==='right'?a.width:0),y:a.y+a.height/2},e.fromSide,{x:b.x+(e.toSide==='right'?b.width:0),y:b.y+b.height/2},e.toSide);for(const path of entry.paths)path.setAttribute('d',p);}
+    if(running&&!frame)frame=requestAnimationFrame(t=>{frame=0;updateFrame(t);});
+  }
+  function rect(key,target,direct=false){if(exporting)return target;let m=motions.get(key);if(!m){m={from:{...target},to:{...target},start:clock-200};motions.set(key,m);}const old=sample(m,clock);if(['x','y','width','height'].some(k=>Math.abs(m.to[k]-target[k])>.01)){m.from=old;m.to={...target};m.start=clock;}
+    if(direct||reduced()){m.from={...target};m.to={...target};m.start=clock-200;return target;}const value=sample(m,clock);if(!value.done)animating=true;return value;}
+  function selected(s){return !exporting&&state.items?.some(i=>nodeKey(i.scope,i.id)===s.key);}
+  function draw(){
+    if(!state)return;clock=performance.now();animating=false;
+    const{flow,scope,gesture:g,zoom,hzoom}=state;scene=buildScene(g?.previewFlow&&scopeKey(g.scope)===scopeKey(scope)?g.previewFlow:flow,scope);
+    const width=exporting?Math.max(900,scene.layout.width+15):Math.max(1800,scene.layout.width+200),height=TOP+Math.max(480,scene.layout.height)+56;
+    nodeRefs=new Map();laneRefs=new Map();edgeRefs=[];svg.replaceChildren();svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('width',exporting?width:width*zoom*hzoom);svg.setAttribute('height',exporting?height:height*zoom);sizer.style.width=width*zoom*hzoom+'px';sizer.style.height=height*zoom+'px';
+    if(exporting)el('rect',{x:0,y:0,width,height,fill:'white'},svg);
+    const defs=el('defs',{},svg);for(const[id,color]of[['arrow','#8e879e'],['arrow-selected','#8668b4']]){const m=el('marker',{id,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'},defs);el('path',{d:'M1 1L9 5 1 9',fill:'none',stroke:color,'stroke-width':1.5,'stroke-linecap':'round'},m);}
+    label('相对时间',18,24,{'font-size':10,fill:'#a4a0b0'},svg);el('line',{x1:LEFT,y1:36,x2:width-24,y2:36,stroke:'#dad8e3'},svg);for(let x=0;x<width-LEFT-40;x+=40){el('line',{x1:LEFT+x,y1:x%200===0?25:31,x2:LEFT+x,y2:36,stroke:'#d1cedc'},svg);if(x%200===0)label(String(x/40),LEFT+x+2,18,{'font-size':10,fill:'#aaa5b7'},svg);}
+    const ghostKeys=new Set(g?.type==='node'&&g.moved?g.items.map(i=>nodeKey(i.scope,i.id)):[]);
+    function movesWithLane(item){return g?.type==='lane'&&g.moved&&(sameScopeValue(item.scope,g.scope)&&item.node?.laneId===g.id||g.baseFlow.nodes.filter(n=>n.laneId===g.id).some(n=>insideNodeScope(item.scope,g.scope,n.id)));}
+    function ghostRect(item){if(!g?.moved)return null;const original=g.originalRects?.get(item.key);if(original&&(ghostKeys.has(item.key)||g.type==='node'&&g.items.some(i=>insideNodeScope(item.scope,i.scope,i.id))||movesWithLane(item)))return{x:original.x+g.delta.x,y:original.y+g.delta.y,width:original.width,height:original.height};return null;}
+    // Root and descendant lane backgrounds first; expanded frames below have no opaque body.
+    for(const s of scene.lanes){
+      const source=g?.originalLanes?.get(s.key),floating=g?.type==='lane'&&g.moved&&g.id===s.lane.id&&scopeKey(g.scope)===scopeKey(s.scope);
+      let target={x:s.x,y:s.y,width:s.scope.length===scope.length?width-2:s.width,height:s.height-8};
+      if(floating&&source)target={...target,y:source.y+g.delta.y};
+      // Nested lanes follow the free preview of their owning expanded component.
+      const nestedFloating=source&&(g?.type==='node'&&g.moved&&g.items.some(i=>insideNodeScope(s.scope,i.scope,i.id))||movesWithLane(s));
+      if(nestedFloating)target={...target,x:source.x+g.delta.x,y:source.y+g.delta.y};
+      s.target=target;s.actual=rect(s.key,target,floating||!!nestedFloating);const r=target,type=TYPES[s.lane.type],group=el('g',{'data-lane':s.lane.id,'data-scope':scopeKey(s.scope),'data-y':r.y,'data-height':r.height,class:'lane-group'},svg);laneRefs.set(s.key,group);
+      el('rect',{x:r.x,y:r.y,width:r.width,height:r.height,rx:8,fill:type.color,'fill-opacity':.85},group);
+      el('path',{d:`M${r.x+3} ${r.y+r.height}Q${r.x+r.width/2} ${r.y+r.height+.8} ${r.x+r.width-3} ${r.y+r.height}`,fill:'none',stroke:type.stroke,'stroke-width':.55,'stroke-opacity':.5},group);
+      el('line',{x1:r.x+LEFT-17,y1:r.y+17,x2:r.x+LEFT-17,y2:r.y+r.height-18,stroke:type.stroke,'stroke-opacity':.12},group);
+      const cy=r.y+r.height/2;
+      if(!exporting){const grip=el('g',{'data-lane-grip':s.lane.id,'data-scope':scopeKey(s.scope),class:'lane-grip',role:'button','aria-label':'拖动排序 '+s.lane.name},group);el('rect',{x:r.x+7,y:cy-27,width:22,height:53,fill:'transparent'},grip);for(let row=0;row<3;row++)for(let col=0;col<2;col++)el('circle',{cx:r.x+14+col*6,cy:cy-10+row*7,r:1.3,fill:type.stroke,'fill-opacity':.55},grip);}
+      const lg=el('g',{'data-lane-select':s.lane.id,'data-scope':scopeKey(s.scope),class:'lane-select',role:'button','aria-label':'选中泳道 '+s.lane.name},group);el('rect',{x:r.x+30,y:cy-38,width:103,height:75,fill:'transparent'},lg);label(s.lane.name.length>10?s.lane.name.slice(0,9)+'…':s.lane.name,r.x+35,cy-6,{'font-size':s.scope.length>scope.length?12:14,fill:type.stroke},lg);label(type.caption,r.x+35,cy+14,{'font-size':8.5,fill:type.stroke,'fill-opacity':.55},lg);
+      if(!exporting){const more=el('g',{'data-lane-more':s.lane.id,'data-scope':scopeKey(s.scope),class:'lane-more',role:'button','aria-label':'泳道菜单 '+s.lane.name},group);el('rect',{x:r.x+106,y:cy+27,width:27,height:24,fill:'transparent'},more);label('···',r.x+111,cy+43,{'font-size':19,fill:type.stroke},more);}
+      if(!exporting&&state.selected?.kind==='lane'&&state.selected.id===s.lane.id)el('rect',{x:r.x+1,y:r.y+1,width:r.width-2,height:r.height-2,rx:8,class:'lane-outline'},group);
+    }
+    const actual=new Map();
+    for(const s of scene.nodes){let floating=ghostRect(s);if(g?.type==='lane'&&g.moved&&sameScopeValue(s.scope,g.scope)&&s.node.laneId===g.id){const old=g.originalRects.get(s.key);if(old)floating={...old,y:old.y+g.delta.y};}s.target=floating||{x:s.x,y:s.y,width:s.width,height:s.height};const r=rect(s.key,s.target,!!floating);s.actual=r;s.dragging=!!floating;actual.set(s.key,{...s,...r});}
+    scene.actual=actual;
+    for(const s of scene.edges){const a=actual.get(s.fromKey),b=actual.get(s.toKey);if(!a||!b)continue;const p=n=>({x:n.x+(n.side==='right'?n.width:0),y:n.y+n.height/2}),path=curve(p({...a,side:s.edge.fromSide}),s.edge.fromSide,p({...b,side:s.edge.toSide}),s.edge.toSide),active=!exporting&&state.selected?.kind==='edge'&&state.selected.id===s.edge.id,group=el('g',{'data-edge':s.edge.id,'data-scope':scopeKey(s.scope)},svg),paths=[];if(!exporting)paths.push(el('path',{d:path,fill:'none',stroke:'transparent','stroke-width':16,class:'edge-hit'},group));paths.push(el('path',{d:path,fill:'none',stroke:active?'#8668b4':'#8e879e','stroke-width':active?2.3:1.55,'marker-end':`url(#${active?'arrow-selected':'arrow'})`,class:'visible-edge','pointer-events':'none'},group));edgeRefs.push({...s,paths});}
+    const rc=rough.svg(svg);
+    for(const s of scene.nodes){
+      const r=s.target,n=s.node,l=s.flow.lanes.find(l=>l.id===n.laneId),type=TYPES[l.type],fill=n.fill==='auto'?type.fill:n.fill,active=selected(s),group=el('g',{'data-node':n.id,'data-scope':scopeKey(s.scope),'data-x':r.x,'data-y':r.y,'data-width':r.width,'data-height':r.height,'data-fill':fill,'data-dragging':s.dragging,class:'node-group'+(active?' selected':''),role:'button','aria-label':n.text||'空白过程'},svg);nodeRefs.set(s.key,group);
+      if(s.child){el('rect',{x:r.x,y:r.y,width:r.width,height:r.height,rx:8,fill:'none',stroke:type.stroke,'stroke-width':1.2,'stroke-dasharray':'6 3','pointer-events':'none'},group);el('rect',{x:r.x,y:r.y,width:r.width,height:35,rx:6,fill:type.fill,stroke:type.stroke,'stroke-width':.8,class:'node-shape'},group);label(n.text.slice(0,70),r.x+12,r.y+23,{'font-size':13,fill:type.stroke,'pointer-events':'none'},group);}
+      else{const art=shape(rc,n.shape,r.x,r.y,r.width,r.height,{stroke:type.stroke,strokeWidth:1.3,roughness:.85,bowing:.9,seed:seed(n.id),fill,fillStyle:'solid'});art.setAttribute('pointer-events','none');group.append(art);el('rect',{x:r.x,y:r.y,width:r.width,height:r.height,fill:'transparent',class:'node-shape'},group);
+        const{lines,factor}=textLines(n,r.width,r.height),inset=(r.width-r.width*factor)/2+14,tx=n.align==='left'?r.x+inset:n.align==='right'?r.x+r.width-inset:r.x+r.width/2,th=lines.length*n.fontSize*1.3,ty=n.valign==='top'?r.y+12:n.valign==='bottom'?r.y+r.height-14-th:r.y+(r.height-th)/2;
+        const text=el('text',{'font-family':'Segoe Print, KaiTi, Microsoft YaHei, sans-serif','font-size':n.fontSize,fill:'#3e4b55','text-anchor':n.align==='left'?'start':n.align==='right'?'end':'middle','pointer-events':'none'},group);lines.forEach((line,i)=>{const t=el('tspan',{x:tx,y:ty+n.fontSize*.95+i*n.fontSize*1.3},text);t.textContent=line;});}
+      const title=el('title',{},group);title.textContent=n.text;
+      if(active)el('rect',{x:r.x-5,y:r.y-5,width:r.width+10,height:r.height+10,rx:4,class:'selected-outline'},group);
+      if(!exporting){for(const side of['left','right']){const x=side==='left'?r.x:r.x+r.width,h=el('g',{'data-resize':n.id+':'+side,'data-scope':scopeKey(s.scope),class:'resize-handle'},group);el('rect',{x:x-6,y:r.y-2,width:12,height:r.height+4,fill:'transparent'},h);el('rect',{x:x-2,y:r.y+9,width:4,height:12,rx:2,fill:'#b4a3ce'},h);el('rect',{x:x-2,y:r.y+r.height-21,width:4,height:12,rx:2,fill:'#b4a3ce'},h);const p=el('g',{'data-port':n.id+':'+side,'data-scope':scopeKey(s.scope),class:'port',role:'button','aria-label':n.text+' '+(side==='left'?'左':'右')+'连接点'},group);el('circle',{cx:x,cy:r.y+r.height/2,r:5},p);el('circle',{cx:x,cy:r.y+r.height/2,r:11,style:'fill:transparent;stroke:none'},p);}
+        const control=(attr,x,y,glyph,title,active=false)=>{const cg=el('g',{[attr]:n.id,'data-scope':scopeKey(s.scope),class:'node-control'+(active?' active':''),role:'button','aria-label':title},group);el('rect',{x,y,width:19,height:19,rx:4,fill:active?'#e5ddf4':'#fff','fill-opacity':.85},cg);el('path',{d:glyphs[glyph],transform:`translate(${x+1},${y+1}) scale(.7)`,fill:'none',stroke:active?'#7b5aaa':'#8d879a','stroke-width':1.7,'stroke-linecap':'round','stroke-linejoin':'round','pointer-events':'none'},cg);const t=el('title',{},cg);t.textContent=title;};
+        const mode=s.mode||n.expanded;control('data-open-subflow',r.x+r.width-24,r.y+3,'open','打开子流程图');control('data-expand-one',r.x+r.width-44,r.y+r.height-21,mode==='one'?'collapse':'one',mode==='one'?'收起一级子流程':'展开一级子流程',mode==='one');control('data-expand-all',r.x+r.width-23,r.y+r.height-21,mode==='all'?'collapse':'all',mode==='all'?'收起所有子流程':'展开所有递归子流程',mode==='all');
+      }
+    }
+    if(!exporting&&g?.type==='connection'){const source=actual.get(nodeKey(g.scope,g.id));if(source)el('path',{d:curve({x:source.x+(g.side==='right'?source.width:0),y:source.y+source.height/2},g.side,g.point,g.side==='right'?'left':'right'),fill:'none',stroke:'#9c83be','stroke-width':1.6,'stroke-dasharray':'5 4','pointer-events':'none'},svg);}
+    if(!exporting&&g?.targetLane){const lane=scene.lanes.find(l=>l.lane.id===g.targetLane&&scopeKey(l.scope)===scopeKey(g.scope));if(lane)el('rect',{x:lane.actual.x+LEFT,y:lane.actual.y+8,width:lane.actual.width-LEFT-10,height:lane.actual.height-16,rx:7,class:'drop-target','pointer-events':'none'},svg);}
+    if(!exporting&&g?.type==='marquee'&&g.moved){const x=Math.min(g.start.x,g.point.x),y=Math.min(g.start.y,g.point.y);el('rect',{x,y,width:Math.abs(g.point.x-g.start.x),height:Math.abs(g.point.y-g.start.y),fill:'#9d86c925',stroke:'#9d86c9','stroke-width':1,'stroke-dasharray':'4 3','pointer-events':'none','data-marquee':'true'},svg);}
+    if(!flow.lanes.length)label('点击“新增泳道”，开始绘制流程',LEFT+40,160,{'font-size':18,fill:'#a299b7'},svg);
+    if(motions.size>15000){const visible=new Set([...scene.nodes.map(n=>n.key),...scene.lanes.map(l=>l.key)]);for(const k of motions.keys())if(!visible.has(k))motions.delete(k);}
+    scene.width=width;scene.height=height;
+    if(!exporting)updateFrame(clock);
+  }
+  return {render(next){state=next;draw();},getScene:()=>scene,reset(){motions.clear();},exportSVG(){exporting=true;draw();const xml=new XMLSerializer().serializeToString(svg),w=scene.width,h=scene.height;exporting=false;draw();return{xml,w,h};}};
+}

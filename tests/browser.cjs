@@ -4,7 +4,7 @@ const fs=require('node:fs/promises'),path=require('node:path');
 (async()=>{
   const browser=await chromium.launch({headless:true,channel:'msedge'});
   const page=await browser.newPage({viewport:{width:1500,height:960},acceptDownloads:true});
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const errors=[];page.on('pageerror',e=>{errors.push(e.stack||e.message);console.log('BROWSER ERROR',e.stack||e.message);});
   await page.goto(process.env.TEST_URL||'http://127.0.0.1:4173');
   await page.waitForSelector('[data-lane]',{timeout:3000});
   assert.equal(await page.locator('[data-lane]').count(),3);
@@ -25,7 +25,7 @@ const fs=require('node:fs/promises'),path=require('node:path');
   await page.keyboard.press('Control+x');assert.equal(await page.locator('[data-node]').count(),1);await page.keyboard.press('Control+v');assert.equal(await page.locator('[data-node]').count(),2);console.log('PASS keyboard nudge and node copy/cut/paste');
   state=await page.evaluate(()=>window.flowApp.getDocument());let b=state.nodes.find(n=>n.id!==a.id);
   let from=await point(164+a.x+a.width/2,132),to=await point(164+b.x+b.width+100,132);await drag(from,to);
-  state=await page.evaluate(()=>window.flowApp.getDocument());assert.ok(state.nodes.find(n=>n.id===a.id).x>state.nodes.find(n=>n.id===b.id).x);console.log('PASS overlapping pointer drag swaps node order');
+  state=await page.evaluate(()=>window.flowApp.getDocument());assert.ok(state.nodes.find(n=>n.id===a.id).x>state.nodes.find(n=>n.id===b.id).x);await page.waitForTimeout(220);console.log('PASS overlapping pointer drag swaps node order');
   const source=page.locator(`[data-port="${b.id}:right"]`),target=page.locator(`[data-port="${a.id}:left"]`);let s=await source.boundingBox(),t=await target.boundingBox();await drag({x:s.x+s.width/2,y:s.y+s.height/2},{x:t.x+t.width/2,y:t.y+t.height/2});
   assert.equal(await page.locator('[data-edge]').count(),1);assert.match(await page.locator('[data-edge] path.visible-edge').getAttribute('d'),/C/);console.log('PASS side ports create curved dependency');
   state=await page.evaluate(()=>window.flowApp.getDocument());const current=state.nodes.find(n=>n.id===a.id);await page.locator(`[data-node="${a.id}"]`).click();let handle=await page.locator(`[data-resize="${a.id}:right"]`).boundingBox();await drag({x:handle.x+handle.width/2,y:handle.y+10},{x:handle.x+handle.width/2+90,y:handle.y+10});state=await page.evaluate(()=>window.flowApp.getDocument());assert.ok(state.nodes.find(n=>n.id===a.id).width>current.width);console.log('PASS horizontal edge resize');
