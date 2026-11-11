@@ -12,6 +12,10 @@ export function makeLane(type) {
   return {id:uid(),type,name:TYPES[type].name};
 }
 export function createDocument() {return {version:1,title:'未命名流程图',lanes:Object.keys(TYPES).map(makeLane),nodes:[],edges:[]};}
+export function createStarterDocument() {
+  const d=createDocument(),a=makeNode('rect',d.lanes[0].id,40,'计算过程'),b=makeNode('rounded',d.lanes[2].id,330,'拷贝过程'),c=makeNode('rect',d.lanes[1].id,620,'通信过程');
+  a.width=180;b.width=112;d.nodes.push(a,b,c);addEdge(d,a.id,'right',b.id,'left');addEdge(d,b.id,'right',c.id,'left');return d;
+}
 export function makeNode(shape,laneId,x=20,text='新建过程') {
   return {id:uid(),shape:SHAPES.includes(shape)?shape:'rect',laneId,x:Math.max(MIN_X,x),offsetY:80,width:152,text,align:'center',valign:'middle',fontSize:16,fill:'auto'};
 }

@@ -1,6 +1,8 @@
 /* Geometry animation is handled by the SVG renderer. Keeping the page grid
    immediate avoids oversized intermediate columns when the viewport resizes. */
 .app-body{transition:none}
+.lane-grip{cursor:grab}
+.lane-grip:active,body.busy .lane-grip{cursor:grabbing}
 @media(max-width:650px){
   .app-body,.app-body:not(.inspector-collapsed):has(.inspector.has-selection){grid-template-columns:min(var(--library-width),28vw) minmax(140px,1fr) 30px}
 }
