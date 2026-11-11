@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#fafbf9"><meta name="description" content="用手绘泳道绘制计算、通信和拷贝过程，探索数据依赖与重叠空间。"><title>网络流程画板</title><link rel="stylesheet" href="./style.css"><script src="./vendor/rough.js"></script><script type="module" src="./app.mjs"></script></head>
+<body>
+<header class="app-header">
+  <div class="brand"><svg width="35" height="35" viewBox="0 0 35 35" aria-hidden="true"><path d="M4 7Q15 5 30 7L29 14 5 15ZM5 20L30 19 30 28 4 29Z" fill="#e7ebfa" stroke="#635a9c" stroke-width="1.6"/><path d="M10 11L24 11M11 24L24 24" stroke="#635a9c" stroke-width="1.6"/></svg><div><strong>网络流程画板</strong><span>把依赖画清楚，让并行看得见</span></div></div>
+  <div class="document-title"><input id="document-title" aria-label="流程图名称" maxlength="200" value="未命名流程图"><span id="save-state"><i></i>已自动保存到本机</span></div>
+  <nav class="header-actions" aria-label="文件操作"><button id="example-btn" class="quiet" aria-label="载入示例">载入示例</button><button id="import-btn" class="quiet" data-icon="folder">打开</button><button id="export-btn" class="primary" data-icon="export" aria-label="导出">导出<span class="chevron">⌄</span></button></nav>
+</header>
+<div class="app-body">
+  <aside class="library panel" aria-label="组件仓库">
+    <div class="panel-heading"><h2>组件仓库</h2><span class="small-tag">拖到泳道里</span></div>
+    <p class="muted intro">从一个过程开始，<br>沿着时间向右展开。</p>
+    <h3>基础形状</h3><div id="shape-library" class="shape-library"></div>
+    <h3 class="preset-title">常用过程</h3><div id="presets" class="presets"></div>
+    <div class="library-note"><svg viewBox="0 0 100 36" aria-hidden="true"><path d="M5 27Q28 0 54 17T93 12M85 8L94 12 88 21" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><p>拉长一个过程，<br>试试能与谁同时执行。</p></div>
+    <button id="help-btn" class="help-button" data-icon="help">操作指南<span>?</span></button>
+  </aside>
+  <main class="workspace">
+    <div class="toolbar">
+      <div class="tool-group"><button id="select-tool" class="icon-button active" aria-label="选择工具" title="选择和拖动" data-icon="cursor"></button><button id="pan-tool" class="icon-button" aria-label="平移工具" title="平移画布 · 按住空格也可平移" data-icon="hand"></button><span class="separator"></span><button id="undo-btn" class="icon-button" aria-label="撤销" title="撤销 Ctrl+Z" data-icon="undo"></button><button id="redo-btn" class="icon-button" aria-label="重做" title="重做 Ctrl+Shift+Z" data-icon="redo"></button></div>
+      <div class="tool-group edit-tools"><button id="copy-btn" class="icon-button" aria-label="复制选中对象" title="复制 Ctrl+C" data-icon="copy"></button><button id="cut-btn" class="icon-button" aria-label="剪切选中对象" title="剪切 Ctrl+X" data-icon="cut"></button><button id="paste-btn" class="icon-button" aria-label="粘贴" title="粘贴 Ctrl+V" data-icon="paste"></button><button id="delete-btn" class="icon-button" aria-label="删除选中对象" title="删除 Delete" data-icon="trash"></button></div>
+      <button id="add-lane-btn" class="add-lane" data-icon="plus" aria-label="新增泳道">新增泳道</button>
+    </div>
+    <div id="viewport" class="viewport" tabindex="0" aria-label="流程图编辑画布">
+      <div id="canvas-sizer"><svg id="diagram" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="网络流程泳道图"></svg></div>
+      <div id="empty-hint" class="empty-hint"><span class="hint-arrow">↖</span><p>把左侧的组件拖进来</p><span>计算、通信、拷贝，从这里开始。</span></div>
+    </div>
+    <div class="workspace-bottom"><span class="context-hint" id="context-hint">双击改文字 · 拖动左右圆点连线 · 空格拖动画布</span><div class="zoom-controls"><button id="zoom-out" aria-label="缩小画布">−</button><button id="zoom-value" aria-label="重置缩放">100%</button><button id="zoom-in" aria-label="放大画布">+</button><span></span><button id="fit-btn" aria-label="适应画布" data-icon="fit"></button></div></div>
+  </main>
+  <aside class="inspector panel" aria-label="属性设置"><div id="inspector-content"></div></aside>
+</div>
+<footer class="app-footer"><div class="legend"><span><i class="compute"></i>计算</span><span><i class="communication"></i>通信</span><span><i class="copy"></i>拷贝</span></div><span>横向位置与宽度表示相对时序</span><span id="document-stats">3 条泳道 · 0 个过程</span></footer>
+<div id="popover" class="popover" hidden></div><div id="toast" class="toast" role="status" aria-live="polite"></div>
+<input id="import-file" type="file" accept=".json,application/json" hidden>
+<dialog id="help-dialog"><div class="dialog-heading"><h2>在纸上推演你的网络</h2><button data-close-dialog="help-dialog" class="icon-button" aria-label="关闭指南">×</button></div><div class="help-grid"><div><strong>放置与调整</strong><p>拖动左侧组件到任意泳道。拖动组件可换位或移入其他泳道；抓住左右边缘调整宽度。同泳道内的过程会自动让位。</p></div><div><strong>文字与连接</strong><p>双击组件编辑文字，回车换行，Ctrl+回车完成。拖动左右圆点到另一组件的圆点，建立曲线依赖。右侧可调整文字九宫格对齐。</p></div><div><strong>整条泳道</strong><p>抓住泳道名称左侧的六点手柄，上下拖动排序。单击泳道名称后，可复制、剪切、粘贴整条泳道及内部连线。</p></div><div><strong>键盘快捷键</strong><p>← / →：微移 1px；Shift：微移 10px<br>Ctrl+C / X / V：复制 / 剪切 / 粘贴<br>Ctrl+Z / Shift+Z：撤销 / 重做<br>Delete：删除；Esc：取消操作<br>空格+拖动：平移；Ctrl+滚轮：缩放</p></div></div><p class="dialog-note">画板自动保存在当前浏览器。导出 JSON 可继续编辑，SVG / PNG 适合放进文档。时间刻度为相对单位，未进行真实性能测量。</p><button class="primary" data-close-dialog="help-dialog">开始画图</button></dialog>
+<dialog id="replace-dialog"><div class="dialog-heading"><h2 id="replace-heading">载入重叠示例</h2><button data-close-dialog="replace-dialog" class="icon-button" aria-label="取消替换">×</button></div><p id="replace-description">示例会替换当前画板。你可以随时通过撤销恢复，也可以先导出 JSON 保存。</p><div class="dialog-actions"><button class="quiet" data-close-dialog="replace-dialog">取消</button><button id="replace-confirm" class="primary" aria-label="载入示例并替换">载入示例并替换</button></div></dialog>
+<noscript>请启用 JavaScript 后使用流程画板。</noscript>
+</body></html>
