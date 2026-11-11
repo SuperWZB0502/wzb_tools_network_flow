@@ -96,6 +96,13 @@ export function addEdge(d,from,fromSide,to,toSide,settle=true) {
   if(reaches(to))return null;
   const e={id:uid(),from,to,fromSide,toSide};d.edges.push(e);if(settle){try{enforceDependencies(d);}catch{d.edges.pop();return null;}}return e;
 }
+export function reconnectEdge(d,id,end,nodeId,side){
+  const original=d.edges.find(e=>e.id===id);if(!original||!['from','to'].includes(end))return false;
+  const previous=d.edges;d.edges=previous.filter(e=>e.id!==id);
+  const edge=addEdge(d,end==='from'?nodeId:original.from,end==='from'?side:original.fromSide,end==='to'?nodeId:original.to,end==='to'?side:original.toSide);
+  if(!edge){d.edges=previous;return false;}
+  edge.id=id;d.edges=previous.map(e=>e.id===id?edge:e);return true;
+}
 export function duplicateLane(d,id,payload) {
   const original=d.lanes.find(l=>l.id===id),source=payload||{lane:original,nodes:d.nodes.filter(n=>n.laneId===id),edges:d.edges};
   if(!source.lane)return;
