@@ -1,4 +1,4 @@
-import {TYPES} from './model.mjs';
+import {TYPES,enforceDependencies} from './model.mjs';
 import {LEFT,TOP,NH,buildScene,nodeKey,scopeKey} from './layout.mjs';
 const NS='http://www.w3.org/2000/svg';
 const sameScopeValue=(a,b)=>scopeKey(a)===scopeKey(b);
@@ -18,10 +18,24 @@ export function createRenderer(svg,sizer){
   let animating=false;
   function applyTransform(group,target,current){const sx=current.width/target.width,sy=current.height/target.height;if(Math.abs(current.x-target.x)+Math.abs(current.y-target.y)+Math.abs(sx-1)+Math.abs(sy-1)<.001)group.removeAttribute('transform');else group.setAttribute('transform',`translate(${current.x} ${current.y}) scale(${sx} ${sy}) translate(${-target.x} ${-target.y})`);}
   function syncScroll(){if(!scene)return;const offset=exporting?0:viewport.scrollLeft/state.zoom;if(clipRect)clipRect.setAttribute('x',offset+112);if(corner)corner.setAttribute('transform','translate('+offset+' 0)');for(const entry of headerRefs.values()){const r=entry.lane.actual;entry.group.setAttribute('transform','translate('+(entry.root?offset:r.x)+' '+r.y+')');}}
+  function constrainActual(){
+    // Apply the same ordering to animation samples and free-drag previews.
+    // Process parents first; when a frame moves, carry its nested content with it.
+    for(const ctx of [...scene.contexts.values()].sort((a,b)=>a.scope.length-b.scope.length)){
+      if(!ctx.flow.edges.length)continue;
+      const members=scene.nodes.filter(s=>sameScopeValue(s.scope,ctx.scope)),byKey=new Map(members.map(s=>[s.key,s])),preview={nodes:members.map(s=>({id:s.key,laneId:s.node.laneId,x:scene.actual.get(s.key).x,width:scene.actual.get(s.key).width})),edges:ctx.flow.edges.map(e=>({from:nodeKey(ctx.scope,e.from),to:nodeKey(ctx.scope,e.to)}))};
+      enforceDependencies(preview,{gap:12*state.hzoom,maxX:Infinity});
+      for(const n of preview.nodes){const s=byKey.get(n.id),r=scene.actual.get(s.key),dx=n.x-r.x;if(!dx)continue;r.x=n.x;s.actual.x=n.x;if(s.child){for(const child of scene.nodes)if(insideNodeScope(child.scope,s.scope,s.node.id)){scene.actual.get(child.key).x+=dx;child.actual.x+=dx;}for(const lane of scene.lanes)if(insideNodeScope(lane.scope,s.scope,s.node.id))lane.actual.x+=dx;}}
+    }
+  }
   function updateFrame(time=performance.now()){
     if(!scene||exporting)return;let running=false;
-    for(const s of scene.lanes){const m=motions.get(s.key),r=m?sample(m,time):s.target;s.actual=r;running||=!r.done;const group=laneRefs.get(s.key);if(group){applyTransform(group,s.target,r);group.setAttribute('data-y',r.y);group.setAttribute('data-height',r.height);}}
-    for(const s of scene.nodes){const m=motions.get(s.key),r=m?sample(m,time):s.target;s.actual=r;running||=!r.done;scene.actual.set(s.key,{...s,...r});const group=nodeRefs.get(s.key);if(group){applyTransform(group,s.target,r);for(const[k,v]of Object.entries({x:r.x,y:r.y,width:r.width,height:r.height}))group.setAttribute('data-'+k,v);}}
+    for(const s of scene.lanes){const m=motions.get(s.key),r=m?sample(m,time):s.target;s.actual=r;running||=!r.done;}
+    for(const s of scene.nodes){const m=motions.get(s.key),r=m?sample(m,time):s.target;s.actual=r;running||=!r.done;scene.actual.set(s.key,{...s,...r});}
+    constrainActual();
+    for(const s of scene.lanes){const r=s.actual,group=laneRefs.get(s.key);if(group){applyTransform(group,s.target,r);group.setAttribute('data-y',r.y);group.setAttribute('data-height',r.height);}}
+    for(const ctx of scene.contexts.values())if(ctx.scope.length>state.scope.length){const parent=scene.actual.get(nodeKey(ctx.scope.slice(0,-1),ctx.scope.at(-1)));if(parent){ctx.ox=parent.x+18;ctx.oy=parent.y+42;}}
+    for(const s of scene.nodes){const r=s.actual,group=nodeRefs.get(s.key);if(group){applyTransform(group,s.target,r);for(const[k,v]of Object.entries({x:r.x,y:r.y,width:r.width,height:r.height}))group.setAttribute('data-'+k,v);}}
     for(const entry of edgeRefs){const a=scene.actual.get(entry.fromKey),b=scene.actual.get(entry.toKey);if(!a||!b)continue;const e=entry.edge,p=curve({x:a.x+(e.fromSide==='right'?a.width:0),y:a.y+a.height/2},e.fromSide,{x:b.x+(e.toSide==='right'?b.width:0),y:b.y+b.height/2},e.toSide);for(const path of entry.paths)path.setAttribute('d',p);}
     syncScroll();
     if(running&&!frame)frame=requestAnimationFrame(t=>{frame=0;updateFrame(t);});

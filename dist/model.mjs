@@ -24,7 +24,33 @@ function pushRight(nodes) {
   let end=MIN_X-GAP;
   for(const n of nodes){n.x=Math.max(n.x,end+GAP);end=n.x+n.width;}
 }
-export function placeNode(d,id,laneId,x) {
+export function enforceDependencies(d,{gap=GAP,maxX=1000000}={}) {
+  if(!d.edges.length)return d;
+  const nodes=new Map(d.nodes.map(n=>[n.id,n])),incoming=new Map(d.nodes.map(n=>[n.id,[]])),state=new Map(),order=[];
+  for(const e of d.edges)if(nodes.has(e.from)&&nodes.has(e.to))incoming.get(e.to).push(nodes.get(e.from));
+  // Visit predecessors first, retaining the requested horizontal order wherever possible.
+  // Lane order follows this topological order, so a reverse-time connection cannot
+  // create a deadlock between dependency constraints and same-lane ordering.
+  for(const start of [...d.nodes].sort((a,b)=>a.x-b.x)){
+    if(state.get(start.id)===2)continue;
+    const stack=[{node:start,index:0}];state.set(start.id,1);
+    while(stack.length){const frame=stack.at(-1),parents=incoming.get(frame.node.id);
+      if(frame.index<parents.length){const parent=parents[frame.index++],mark=state.get(parent.id);if(mark===1)throw Error('依赖不能形成循环。');if(mark!==2){state.set(parent.id,1);stack.push({node:parent,index:0});}}
+      else{state.set(frame.node.id,2);order.push(frame.node);stack.pop();}
+    }
+  }
+  const positions=new Map(),laneEnd=new Map();
+  for(const n of order){let x=Math.max(MIN_X,n.x,laneEnd.get(n.laneId)??MIN_X);for(const p of incoming.get(n.id))x=Math.max(x,positions.get(p.id)+p.width+gap);if(!Number.isFinite(x)||x>maxX)throw Error('依赖链超出画板范围。');positions.set(n.id,x);laneEnd.set(n.laneId,x+n.width+gap);}
+  for(const n of d.nodes)n.x=positions.get(n.id);
+  return d;
+}
+function scheduledEdit(d,edit,settle=true){
+  if(!settle||!d.edges.length)return edit();
+  const original=d.nodes,snapshot=original.map(n=>({node:n,x:n.x,width:n.width,laneId:n.laneId,offsetY:n.offsetY}));
+  try{const result=edit();enforceDependencies(d);return result;}catch(error){d.nodes=original;for(const {node,...geometry}of snapshot)Object.assign(node,geometry);throw error;}
+}
+export function placeNode(d,id,laneId,x,settle=true){return scheduledEdit(d,()=>place(d,id,laneId,x),settle);}
+function place(d,id,laneId,x) {
   const n=d.nodes.find(n=>n.id===id);
   if(!n||!d.lanes.some(l=>l.id===laneId))return;
   x=Math.max(MIN_X,Math.min(50000,x));
@@ -41,14 +67,16 @@ export function placeNode(d,id,laneId,x) {
   pushRight(ordered);
   return n;
 }
-export function nudgeNode(d,id,delta) {
+export function nudgeNode(d,id,delta){return scheduledEdit(d,()=>nudge(d,id,delta));}
+function nudge(d,id,delta) {
   const n=d.nodes.find(n=>n.id===id);if(!n)return;
   const ns=laneNodes(d,n.laneId),i=ns.indexOf(n);
   const lo=i?ns[i-1].x+ns[i-1].width+GAP:MIN_X;
   const hi=i<ns.length-1?ns[i+1].x-n.width-GAP:50000;
   n.x=Math.max(lo,Math.min(hi,n.x+delta));
 }
-export function resizeNode(d,id,side,edge) {
+export function resizeNode(d,id,side,edge){return scheduledEdit(d,()=>resize(d,id,side,edge));}
+function resize(d,id,side,edge) {
   const n=d.nodes.find(n=>n.id===id);if(!n)return;
   const ns=laneNodes(d,n.laneId),i=ns.indexOf(n);
   if(side==='left'){
@@ -61,12 +89,12 @@ export function resizeNode(d,id,side,edge) {
   }
   return n;
 }
-export function addEdge(d,from,fromSide,to,toSide) {
+export function addEdge(d,from,fromSide,to,toSide,settle=true) {
   if(from===to||!d.nodes.some(n=>n.id===from)||!d.nodes.some(n=>n.id===to)||!['left','right'].includes(fromSide)||!['left','right'].includes(toSide))return null;
   if(d.edges.some(e=>e.from===from&&e.to===to))return null;
   const reaches=(id,seen=new Set())=>{if(id===from)return true;if(seen.has(id))return false;seen.add(id);return d.edges.filter(e=>e.from===id).some(e=>reaches(e.to,seen));};
   if(reaches(to))return null;
-  const e={id:uid(),from,to,fromSide,toSide};d.edges.push(e);return e;
+  const e={id:uid(),from,to,fromSide,toSide};d.edges.push(e);if(settle){try{enforceDependencies(d);}catch{d.edges.pop();return null;}}return e;
 }
 export function duplicateLane(d,id,payload) {
   const original=d.lanes.find(l=>l.id===id),source=payload||{lane:original,nodes:d.nodes.filter(n=>n.laneId===id),edges:d.edges};
@@ -104,7 +132,8 @@ export function validateDocument(input) {
   }
   for(const l of d.lanes){const ns=laneNodes(d,l.id);for(let i=1;i<ns.length;i++)if(ns[i].x<ns[i-1].x+ns[i-1].width+GAP-0.01)fail();}
   const edges=d.edges;d.edges=[];
-  for(const e of edges){take(e.id);if(!addEdge(d,e.from,e.fromSide,e.to,e.toSide))fail();d.edges.at(-1).id=e.id;}
+  for(const e of edges){take(e.id);if(!addEdge(d,e.from,e.fromSide,e.to,e.toSide,false))fail();d.edges.at(-1).id=e.id;}
+  enforceDependencies(d);
   // Only known properties are retained, so imports cannot inject UI or executable markup.
   return {version:1,title:d.title,lanes:d.lanes.map(({id,type,name})=>({id,type,name})),nodes:d.nodes.map(({id,shape,laneId,x,offsetY,width,text,align,valign,fontSize,fill,subflow,expanded})=>({id,shape,laneId,x,offsetY,width,text,align,valign,fontSize,fill,...(subflow?{subflow}:{}),...(expanded?{expanded}:{})})),edges:d.edges};
   }
@@ -121,14 +150,15 @@ export function cloneFlow(d){
   return {version:1,title:d.title,lanes,nodes,edges:d.edges.map(e=>({...clone(e),id:uid(),from:nm.get(e.from),to:nm.get(e.to)}))};
 }
 export function cloneNodeTree(n){const fresh={...clone(n),id:uid(),offsetY:80};if(n.subflow)fresh.subflow=cloneFlow(n.subflow);return fresh;}
-export function moveNodes(d,ids,anchorId,targetLaneId,x){
+export function moveNodes(d,ids,anchorId,targetLaneId,x){return scheduledEdit(d,()=>move(d,ids,anchorId,targetLaneId,x));}
+function move(d,ids,anchorId,targetLaneId,x){
   const nodes=d.nodes.filter(n=>ids.includes(n.id)),anchor=nodes.find(n=>n.id===anchorId),targetIndex=d.lanes.findIndex(l=>l.id===targetLaneId);
   if(!anchor||targetIndex<0)return;
-  if(nodes.length===1){placeNode(d,anchorId,targetLaneId,x);anchor.offsetY=80;return;}
+  if(nodes.length===1){placeNode(d,anchorId,targetLaneId,x,false);anchor.offsetY=80;return;}
   const laneIndex=n=>d.lanes.findIndex(l=>l.id===n.laneId),minLane=Math.min(...nodes.map(laneIndex)),maxLane=Math.max(...nodes.map(laneIndex));
   const shift=Math.max(-minLane,Math.min(d.lanes.length-1-maxLane,targetIndex-laneIndex(anchor)));
   const dx=Math.max(MIN_X-Math.min(...nodes.map(n=>n.x)),x-anchor.x);
   const moves=nodes.map(n=>({n,x:n.x+dx,lane:d.lanes[laneIndex(n)+shift].id})).sort((a,b)=>a.x-b.x);
   d.nodes=d.nodes.filter(n=>!ids.includes(n.id));
-  for(const item of moves){item.n.laneId=item.lane;item.n.x=item.x;item.n.offsetY=80;d.nodes.push(item.n);placeNode(d,item.n.id,item.lane,item.x);}
+  for(const item of moves){item.n.laneId=item.lane;item.n.x=item.x;item.n.offsetY=80;d.nodes.push(item.n);placeNode(d,item.n.id,item.lane,item.x,false);}
 }

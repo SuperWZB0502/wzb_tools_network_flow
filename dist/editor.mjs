@@ -31,7 +31,7 @@ function renderInspector(){
 function toast(message){$('#toast').textContent=message;$('#toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('visible'),2800);}
 function save(){try{localStorage.setItem(STORAGE,JSON.stringify(root));$('#save-state').innerHTML='<i></i>已自动保存到本机';}catch{$('#save-state').textContent='存储已满，请导出 JSON';toast('本机保存失败，请导出 JSON 备份。');}}
 function commit(before,message,refresh=true){if(JSON.stringify(before)!==JSON.stringify(root)){undoStack.push(before);if(undoStack.length>80)undoStack.shift();redoStack=[];save();}syncFlow();render(refresh);if(message)toast(message);}
-function mutate(fn,message,refresh=true){finishEditing();const before=clone(root),beforeSelection=clone(selected),beforeItems=clone(items),beforePath=[...path];try{fn();validateDocument(root);}catch{root=before;path=beforePath;selected=beforeSelection;items=beforeItems;syncFlow();render();toast('操作超过流程层级或容量限制，已保留原图。最多 20 级、3000 个组件。');return false;}commit(before,message,refresh);return true;}
+function mutate(fn,message,refresh=true){finishEditing();const before=clone(root),beforeSelection=clone(selected),beforeItems=clone(items),beforePath=[...path];try{fn();root=validateDocument(root);}catch{root=before;path=beforePath;selected=beforeSelection;items=beforeItems;syncFlow();render();toast('操作超过流程层级或容量限制，已保留原图。最多 20 级、3000 个组件。');return false;}commit(before,message,refresh);return true;}
 function undo(){finishEditing();cancelGesture();if(!undoStack.length)return;redoStack.push(clone(root));root=undoStack.pop();clearSelection();syncFlow();save();render();}
 function redo(){finishEditing();if(!redoStack.length)return;undoStack.push(clone(root));root=redoStack.pop();clearSelection();syncFlow();save();render();}
 function setNode(key,value,refresh=true){if(selected?.kind==='node'&&items.length===1)mutate(()=>{nodeBy(selected.id)[key]=value;},undefined,refresh);}
@@ -73,6 +73,7 @@ document.addEventListener('pointerdown',e=>{
 });
 document.addEventListener('pointermove',e=>{mouse={clientX:e.clientX,clientY:e.clientY};
  if(!gesture)return;const g=gesture;
+ try{
  if(g.type==='panel'){const raw=g.width+(e.clientX-g.startX)*(g.side==='library'?1:-1);setPanel(g.side,raw<80,Math.max(140,Math.min(380,raw)));return;}
  if(g.type==='pan'){viewport.scrollLeft=g.left-e.clientX+g.startX;viewport.scrollTop=g.top-e.clientY+g.startY;return;}
  if(g.type!=='connection'&&Math.hypot(e.clientX-g.startX,e.clientY-g.startY)<4&&!g.moved)return;g.moved=true;lastNodeClick=null;document.body.classList.add('busy');if(inside(e))autoScroll(e);const p=point(e);
@@ -82,9 +83,11 @@ document.addEventListener('pointermove',e=>{mouse={clientX:e.clientX,clientY:e.c
  if(g.type==='node'){g.delta={x:p.x-g.start.x,y:p.y-g.start.y};const l=inside(e)?laneAt(p,g.scope):null;g.targetLane=l?.lane.id;const ctx=g.baseContext,stableLayout={...ctx.layout,events:ctx.layout.events.filter(event=>!g.items.some(i=>i.id===event.id))},toModel=q=>inverseX(stableLayout,q.x-ctx.ox-ctx.layout.left);g.targetX=g.anchorX+toModel(p)-toModel(g.start);g.previewFlow=null;if(l&&l.lane.id===g.anchorLane){g.previewFlow=clone(getFlow(g.before,g.scope));moveNodes(g.previewFlow,g.items.map(i=>i.id),g.id,l.lane.id,g.targetX);}render(false);return;}
  if(g.type==='resize'){const d=owner(g.scope),beforeFlow=getFlow(g.before,g.scope);d.nodes=clone(beforeFlow.nodes);resizeNode(d,g.id,g.side,modelX(p,g.scope));render(false);return;}
  if(g.type==='lane'){g.delta={x:0,y:p.y-g.start.y};const ctx=g.baseContext,relative=p.y-ctx.oy,rows=ctx.layout.lanes;let target=rows.findIndex(l=>relative<l.y+l.height);if(target<0)target=rows.length-1;const preview=clone(g.baseFlow),i=preview.lanes.findIndex(l=>l.id===g.id),[lane]=preview.lanes.splice(i,1);preview.lanes.splice(Math.max(0,target),0,lane);g.previewFlow=preview;render(false);}
+ }catch(error){if(g.before){root=g.before;syncFlow();}clearGesture();render();toast(error.message||'无法完成操作，已保留原图。');}
 });
 document.addEventListener('pointerup',e=>{
  if(!gesture)return;const g=gesture;
+ const rollback=g.before||clone(root);try{
  if(g.type==='node'&&!g.moved){lastNodeClick={id:g.id,time:Date.now()};clearGesture();if(g.double){lastNodeClick=null;startEditing(g.id,g.scope);}else render();return;}
  if(g.type==='library'){const p=point(e),l=inside(e)&&deepestLane(p);if(l&&g.moved){const before=clone(root),d=owner(l.scope),n=makeNode(g.shape,l.lane.id,Math.max(MIN_X,modelX(p,l.scope)-76),g.text);d.nodes.push(n);placeNode(d,n.id,n.laneId,n.x);selectSingle('node',n.id,l.scope);clearGesture();commit(before);return;}}
  if(g.type==='node'&&g.moved){const p=point(e),l=inside(e)&&laneAt(p,g.scope);clearGesture();if(l){moveNodes(owner(g.scope),g.items.map(i=>i.id),g.id,l.lane.id,g.targetX);commit(g.before);}else render();return;}
@@ -92,6 +95,7 @@ document.addEventListener('pointerup',e=>{
  if(g.type==='resize'&&g.moved){clearGesture();commit(g.before);return;}
  if(g.type==='connection'){const t=document.elementFromPoint(e.clientX,e.clientY)?.closest('[data-port]');if(t&&sameScope(parseScope(t.dataset.scope),g.scope)){const[id,side]=t.dataset.port.split(':'),before=clone(root),edge=addEdge(owner(g.scope),g.id,g.side,id,side);if(edge){selectSingle('edge',edge.id,g.scope);clearGesture();commit(before,'已建立数据依赖');return;}toast('无法自连、重复连接或形成循环依赖。');}}
  clearGesture();render();
+ }catch(error){root=rollback;syncFlow();clearGesture();render();toast(error.message||'无法完成操作，已保留原图。');}
 });
 document.addEventListener('pointercancel',()=>{if(gesture?.type==='resize'){root=gesture.before;syncFlow();}cancelGesture();});
 document.addEventListener('contextmenu',e=>{if(!e.target.closest('#viewport'))return;e.preventDefault();cancelGesture();const n=e.target.closest('[data-node]');if(n){const scope=parseScope(n.dataset.scope);if(!items.some(i=>i.id===n.dataset.node&&sameScope(i.scope,scope)))selectSingle('node',n.dataset.node,scope);render();const menu=$('#popover');menu.innerHTML=`<button data-selection-action="delete" aria-label="删除组件" data-icon="trash">${items.length>1?'删除所选组件':'删除组件'}</button><button data-selection-action="copy" data-icon="copy">复制组件</button><button data-selection-action="cut" data-icon="cut">剪切组件</button>`;menu.hidden=false;hydrateIcons(menu);positionMenu(e.clientX,e.clientY);return;}const header=e.target.closest('[data-lane-header]');if(header){laneMenu(header.dataset.laneHeader,parseScope(header.dataset.scope),e.clientX,e.clientY);return;}const l=deepestLane(point(e));if(l)laneMenu(l.lane.id,l.scope,e.clientX,e.clientY);});
